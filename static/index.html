@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inkwell Proxy Forge - Lorcana Proxy Sheets</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Nunito+Sans:wght@400;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="masthead">
+      <div class="ink-hex" aria-hidden="true"><div class="ink-hex__inner"></div></div>
+      <div>
+        <h1 class="masthead__title">Inkwell Proxy Forge</h1>
+        <p class="masthead__subtitle">Build printable 300 DPI proxy sheets from set and card numbers</p>
+      </div>
+    </header>
+
+    <section class="error-panel" id="error-panel" role="alert" aria-live="assertive" hidden>
+      <div class="error-panel__header">
+        <h2 class="error-panel__title" id="error-title"></h2>
+        <button type="button" class="btn btn--ghost btn--small" id="error-dismiss" aria-label="Dismiss errors">Dismiss</button>
+      </div>
+      <ul class="error-panel__list" id="error-list"></ul>
+      <p class="error-panel__request" id="error-request-id" hidden></p>
+    </section>
+
+    <main class="layout">
+      <section class="panel" aria-labelledby="builder-heading">
+        <h2 class="panel__title" id="builder-heading">Summon Cards</h2>
+
+        <form class="card-form" id="card-form" novalidate>
+          <fieldset class="card-form__fields" id="card-form-fields" disabled>
+            <div class="field">
+              <label class="field__label" for="set-input">Set</label>
+              <input class="field__input" id="set-input" name="setCode" type="text" inputmode="text" autocomplete="off" placeholder="e.g. 10" required aria-describedby="set-error">
+              <p class="field__error" id="set-error" aria-live="polite"></p>
+            </div>
+            <div class="field">
+              <label class="field__label" for="number-input">Card #</label>
+              <input class="field__input" id="number-input" name="number" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 136" required aria-describedby="number-error">
+              <p class="field__error" id="number-error" aria-live="polite"></p>
+            </div>
+            <div class="field field--narrow">
+              <label class="field__label" for="quantity-input">Qty</label>
+              <input class="field__input" id="quantity-input" name="quantity" type="number" inputmode="numeric" step="1" required aria-describedby="quantity-error">
+              <p class="field__error" id="quantity-error" aria-live="polite"></p>
+            </div>
+            <button type="submit" class="btn btn--primary card-form__add">Add</button>
+          </fieldset>
+          <p class="form-hint">Leading zeros are fine: <kbd>010</kbd> / <kbd>007</kbd> becomes set 10, card 7.</p>
+        </form>
+
+        <div class="list-header">
+          <h3 class="list-header__title">Your Deck</h3>
+          <button type="button" class="btn btn--ghost btn--small" id="clear-button" disabled>Clear all</button>
+        </div>
+
+        <p class="empty-state" id="empty-list">No cards yet. Add a set and card number above.</p>
+        <ul class="card-list" id="card-list" aria-label="Cards to print"></ul>
+
+        <div class="summary" id="summary" aria-live="polite">
+          <span><strong id="summary-cards">0</strong> <span id="summary-cards-unit">cards</span></span>
+          <span class="summary__divider" aria-hidden="true">&#9670;</span>
+          <span><strong id="summary-pages">0</strong> <span id="summary-pages-unit">pages</span></span>
+        </div>
+        <p class="limit-warning" id="limit-warning" hidden></p>
+
+        <div class="actions">
+          <button type="button" class="btn btn--primary btn--large" id="generate-button" disabled>Forge Sheet</button>
+          <button type="button" class="btn btn--ghost" id="cancel-button" hidden>Cancel</button>
+        </div>
+
+        <div class="progress" id="progress" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p class="progress__text" id="progress-text"></p>
+        </div>
+      </section>
+
+      <section class="panel panel--viewer" aria-labelledby="viewer-heading">
+        <div class="viewer-header">
+          <h2 class="panel__title" id="viewer-heading">Proxy Sheet</h2>
+          <button type="button" class="btn btn--primary" id="print-button" hidden>Print</button>
+        </div>
+
+        <div class="viewer-empty" id="viewer-empty">
+          <div class="viewer-empty__glyph" aria-hidden="true">&#10022;</div>
+          <p>Your forged pages will appear here.</p>
+        </div>
+
+        <div class="viewer" id="viewer" hidden>
+          <div class="viewer__stage">
+            <img class="viewer__page" id="viewer-image" alt="">
+          </div>
+          <div class="viewer__nav">
+            <button type="button" class="btn btn--ghost btn--small" id="prev-page" aria-label="Previous page">&#8249; Prev</button>
+            <span class="viewer__counter" id="page-counter" aria-live="polite"></span>
+            <button type="button" class="btn btn--ghost btn--small" id="next-page" aria-label="Next page">Next &#8250;</button>
+          </div>
+          <p class="print-tip">
+            Print at <strong>100% / Actual size</strong> with margins set to <strong>None</strong> so cards measure 2.5&nbsp;in &times; 3.5&nbsp;in.
+            Cards have a small cutting gap between them. The top and bottom margins are under 0.2&nbsp;in, so some printers may clip those crop marks.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      Card data and images from <a href="https://lorcast.com" target="_blank" rel="noopener noreferrer">Lorcast</a>.
+      Unofficial fan tool for personal playtesting; not affiliated with Disney or Ravensburger.
+    </footer>
+  </div>
+
+  <div class="print-root" id="print-root" aria-hidden="true"></div>
+
+  <template id="card-row-template">
+    <li class="card-row">
+      <span class="card-row__gem" aria-hidden="true"></span>
+      <span class="card-row__id">
+        <span class="card-row__label">Set</span> <span class="card-row__set"></span>
+        <span class="card-row__label">#</span> <span class="card-row__number"></span>
+      </span>
+      <label class="card-row__qty">
+        <span class="visually-hidden">Quantity</span>
+        <input class="field__input field__input--compact card-row__qty-input" type="number" step="1" inputmode="numeric">
+      </label>
+      <button type="button" class="btn btn--icon card-row__remove" aria-label="Remove card">&times;</button>
+      <p class="card-row__error" aria-live="polite"></p>
+    </li>
+  </template>
+
+  <template id="error-item-template">
+    <li class="error-panel__item"></li>
+  </template>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
