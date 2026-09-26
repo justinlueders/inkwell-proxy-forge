@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -17,6 +18,12 @@ from pydantic import ValidationError
 
 from server.config import (
     CARD_ENDPOINT,
+    EXACT_NAME_QUERY,
+    FUZZY_TERM_QUERY,
+    NAME_VERSION_SEPARATOR,
+    SEARCH_ENDPOINT,
+    SEARCH_QUERY_PARAM,
+    VERSION_QUERY,
     HTTP_SERVER_ERROR_MAX,
     HTTP_SERVER_ERROR_MIN,
     LORCAST_API_BASE,
@@ -40,7 +47,7 @@ from server.errors import (
     UpstreamUnavailableError,
 )
 from server.models import CardError, CardErrorReason, CardRequest, ImageSize, LorcastCard, SetsResponse
-from server.normalization import set_code_key
+from server.normalization import card_name_key, normalize_card_text, set_code_key
 from server.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -49,6 +56,7 @@ Sleeper = Callable[[float], Awaitable[None]]
 
 RETRY_AFTER_HEADER = "Retry-After"
 CONTENT_LENGTH_HEADER = "Content-Length"
+SEARCH_RESULTS_KEY = "results"
 MS_PER_SECOND = 1000
 _PATH_SAFE_CHARS = ""
 
@@ -94,6 +102,22 @@ def parse_retry_after(value: str | None, *, now: datetime | None = None) -> floa
             retry_at = retry_at.replace(tzinfo=UTC)
         seconds = (retry_at - (now or datetime.now(UTC))).total_seconds()
     return min(max(seconds, 0.0), MAX_RETRY_AFTER_SECONDS)
+
+
+def build_exact_query(name: str, version: str | None) -> str:
+    query = EXACT_NAME_QUERY.format(name=normalize_card_text(name))
+    if version:
+        query = f"{query} {VERSION_QUERY.format(version=normalize_card_text(version))}"
+    return query
+
+
+def _text_key(text: str) -> str:
+    return normalize_card_text(text).casefold()
+
+
+def _full_name_key(card: LorcastCard) -> str:
+    full_name = f"{card.name}{NAME_VERSION_SEPARATOR}{card.version}" if card.version else card.name
+    return _text_key(full_name)
 
 
 def _is_transient_status(status_code: int) -> bool:
@@ -184,6 +208,58 @@ class LorcastClient:
             return LorcastCard.model_validate_json(body)
         except ValidationError as exc:
             raise InvalidResponseError(f"Unexpected card data from Lorcast: {exc.error_count()} validation error(s)") from exc
+
+    async def search_card(self, name: str, version: str | None) -> LorcastCard:
+        """Find the standard printing of a card by exact name and version.
+
+        Lorcast's `v:` term is fuzzy, so results are filtered to an exact (case-insensitive) match.
+        A second, full-name search covers names or versions that themselves contain the separator.
+        """
+        wanted = card_name_key(name, version)
+        primary = await self._search(build_exact_query(name, version))
+        match = next((card for card in primary if card_name_key(card.name, card.version) == wanted), None)
+        if match is not None:
+            return match
+
+        if version is not None:
+            full_name = f"{name}{NAME_VERSION_SEPARATOR}{version}"
+            fallback = await self._search(FUZZY_TERM_QUERY.format(text=normalize_card_text(full_name)))
+            full_matches = [card for card in fallback if _full_name_key(card) == _text_key(full_name)]
+            if len(full_matches) == 1:
+                return full_matches[0]
+
+        display = f"{name}{NAME_VERSION_SEPARATOR}{version}" if version else name
+        if version is None and any(
+            card.version and card_name_key(card.name, None) == wanted for card in primary
+        ):
+            example = next(card.display_name for card in primary if card.version)
+            raise CardNotFoundError(
+                f"'{display}' needs a version, for example '{example}'"
+            )
+        raise CardNotFoundError(f"No card named '{display}' on Lorcast")
+
+    async def _search(self, query: str) -> list[LorcastCard]:
+        url = str(httpx.URL(f"{self._base_url}{SEARCH_ENDPOINT}", params={SEARCH_QUERY_PARAM: query}))
+        try:
+            body = await self._get(url, max_bytes=MAX_JSON_BYTES)
+        except ResponseTooLargeError as exc:
+            raise InvalidResponseError(exc.detail) from exc
+        try:
+            payload = json.loads(body)
+        except ValueError as exc:
+            raise InvalidResponseError(f"Lorcast search returned invalid JSON: {exc}") from exc
+        results = payload.get(SEARCH_RESULTS_KEY) if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise InvalidResponseError("Lorcast search response has no results list")
+
+        cards: list[LorcastCard] = []
+        for item in results:
+            try:
+                cards.append(LorcastCard.model_validate(item))
+            except ValidationError as exc:
+                logger.warning("Skipping malformed search result for %r: %d error(s)", query, exc.error_count())
+        logger.debug("Search %r returned %d result(s)", query, len(cards))
+        return cards
 
     async def fetch_image(self, card: LorcastCard, size: ImageSize = ImageSize.LARGE) -> Image.Image:
         url = card.image_url(size)

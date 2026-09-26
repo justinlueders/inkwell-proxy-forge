@@ -10,6 +10,8 @@ from server.config import (
     CARDS_PER_PAGE,
     MAX_ENTRIES_PER_REQUEST,
     MAX_IDENTIFIER_LENGTH,
+    MAX_IMPORT_LINES,
+    MAX_IMPORT_TEXT_LENGTH,
     MAX_QUANTITY,
     MAX_TOTAL_CARDS,
     MIN_QUANTITY,
@@ -43,6 +45,14 @@ class ImageSize(StrEnum):
     LARGE = "large"
 
 
+class ImportIssueReason(StrEnum):
+    PARSE_ERROR = "PARSE_ERROR"
+    INVALID_QUANTITY = "INVALID_QUANTITY"
+    NOT_FOUND = "NOT_FOUND"
+    INVALID_RESPONSE = "INVALID_RESPONSE"
+    UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
+
+
 class CardErrorReason(StrEnum):
     NOT_FOUND = "NOT_FOUND"
     UNKNOWN_SET = "UNKNOWN_SET"
@@ -64,6 +74,14 @@ class DigitalImageUris(LorcastModel):
     small: HttpUrl | None = None
     normal: HttpUrl | None = None
     large: HttpUrl | None = None
+
+    @field_validator("small", "normal", "large", mode="before")
+    @classmethod
+    def _blank_is_missing(cls, value: Any) -> Any:
+        """Lorcast sends "" for sizes it doesn't have (e.g. some promo printings)."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class ImageUris(LorcastModel):
@@ -162,6 +180,20 @@ class SheetRequest(BaseModel):
         return sum(card.quantity for card in self.cards)
 
 
+class ImportRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_IMPORT_TEXT_LENGTH)
+
+    @field_validator("text")
+    @classmethod
+    def _check_lines(cls, value: str) -> str:
+        line_count = sum(1 for line in value.splitlines() if line.strip())
+        if line_count == 0:
+            raise ValueError("Paste at least one deck list line, e.g. '4 Hercules - Spectral Demigod'")
+        if line_count > MAX_IMPORT_LINES:
+            raise ValueError(f"The deck list has {line_count} lines; the limit is {MAX_IMPORT_LINES}")
+        return value
+
+
 # --- App response models -----------------------------------------------------
 
 
@@ -178,6 +210,26 @@ class SheetResponse(BaseModel):
     card_count: int
     page_count: int
     errors: list[CardError]
+
+
+class ImportedCard(BaseModel):
+    set_code: str
+    number: str
+    quantity: int
+    name: str
+
+
+class ImportIssue(BaseModel):
+    line_number: int
+    line: str
+    reason: ImportIssueReason
+    detail: str
+
+
+class ImportResponse(BaseModel):
+    request_id: str
+    cards: list[ImportedCard]
+    issues: list[ImportIssue]
 
 
 class ErrorResponse(BaseModel):
@@ -202,3 +254,5 @@ class ClientConfigResponse(BaseModel):
     max_identifier_length: int = MAX_IDENTIFIER_LENGTH
     cards_per_page: int = CARDS_PER_PAGE
     request_delay_seconds: float = REQUEST_DELAY_SECONDS
+    max_import_lines: int = MAX_IMPORT_LINES
+    max_import_text_length: int = MAX_IMPORT_TEXT_LENGTH

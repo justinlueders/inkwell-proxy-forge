@@ -1,6 +1,6 @@
 # Inkwell Proxy Forge
 
-A small local web app that builds printable **Disney Lorcana proxy sheets**. You list cards by set number, card number, and quantity; a FastAPI server fetches each card's art from the [Lorcast API](https://lorcast.com/docs/api/cards) and returns **300 DPI US Letter pages** with a print button.
+A small local web app that builds printable **Disney Lorcana proxy sheets**. You list cards by set number, card number, and quantity (or paste a dreamborn.ink deck list); a FastAPI server fetches each card's art from the [Lorcast API](https://lorcast.com/docs/api/cards) and returns **300 DPI US Letter pages** with a print button.
 
 ![Inkwell Proxy Forge UI](docs/screenshot.png)
 
@@ -8,6 +8,7 @@ A small local web app that builds printable **Disney Lorcana proxy sheets**. You
 
 - Enter cards as set / card number / quantity. Leading zeros are fine (`010` / `007` becomes set 10, card 7), and set codes are matched case-insensitively (`p1` finds `P1`).
 - Duplicate entries are merged and their quantities summed.
+- **Import** a deck list pasted from [dreamborn.ink](https://dreamborn.ink) (`4 Hercules - Spectral Demigod`, one card per line). Each card is looked up on Lorcast and added using its standard printing.
 - The server fetches the **large** image for each unique card, with at least **75 ms between every request** to Lorcast (card lookups, image downloads, and retries).
 - Pages are **2550 x 3300 px (8.5 x 11 in at 300 DPI)** with cards at true size, **2.5 x 3.5 in**, in a 3 x 3 grid.
 - A small cutting gap separates the cards (1/8 in between columns, 1/16 in between rows), with crop marks at every card edge.
@@ -44,9 +45,29 @@ Open [http://127.0.0.1:8765](http://127.0.0.1:8765). Add `--reload` while develo
 ## Using it
 
 1. Type a set number, card number, and quantity, then press **Add** (or Enter). The set stays filled in, so you can add several cards from the same set quickly.
+   Or press **Import**, paste a deck list, and press **Import** in the dialog (see below).
 2. Adjust quantities or remove cards in the list. The running total shows cards and pages.
 3. Press **Forge Sheet**. The pages appear in the viewer when they're ready.
 4. Press **Print**.
+
+### Importing a deck list
+
+Export a deck from dreamborn.ink as text and paste it into the Import dialog. Each line is a count followed by the card name, with the version after ` - `:
+
+```
+4 Hercules - Spectral Demigod
+2 Bunch of Balloons
+3 The Horseman Strikes!
+```
+
+![Import dialog](docs/import-dialog.png)
+
+- `4x Hercules - Spectral Demigod` also works. Blank lines are ignored, and repeated lines for the same card are added together.
+- Names are matched exactly (ignoring case, extra spaces and curly quotes). Each card uses Lorcast's **standard printing**. For a specific printing, edit its set and number in the list afterward.
+- Characters and other cards with versions need the version. `1 Hercules` is rejected with a suggestion such as `Hercules - Spectral Demigod`.
+- Lookups follow the same 75 ms spacing as sheet generation, so a 60-card deck takes a few seconds.
+- If every line resolves, the dialog closes and the cards appear in the list, with their names shown next to the set and number.
+- If some lines fail, the cards that resolved are still added. The dialog stays open, lists each problem line and why it failed, and leaves only those lines in the text box so you can fix them and import again. Cards that would go over the per-card, per-sheet or distinct-card limits are listed as skipped.
 
 ### Printing tips
 
@@ -66,6 +87,7 @@ Every tunable value is a named constant in [`server/config.py`](server/config.py
 | `MAX_ENTRIES_PER_REQUEST` | `60` | Different cards per sheet |
 | `MAX_TOTAL_CARDS` | `90` | Total cards per sheet (10 pages) |
 | `MAX_RETRIES` | `3` | Retries for timeouts, connection errors, HTTP 429 and 5xx |
+| `MAX_IMPORT_LINES` / `MAX_IMPORT_TEXT_LENGTH` | `100` / `10000` | Size limits for a pasted deck list |
 
 The server checks at startup that the card grid (including gaps) fits on the page. The browser loads its limits from the server, so the UI and server always enforce the same rules.
 
@@ -76,6 +98,7 @@ Set the `LOG_LEVEL` environment variable (for example `DEBUG`) to see every Lorc
 | Method | Route | Description |
 | --- | --- | --- |
 | `POST` | `/api/sheet` | Build a sheet. Returns base64 JPEG pages plus per-card errors. |
+| `POST` | `/api/import` | Resolve a pasted deck list to set and card numbers. |
 | `GET` | `/api/config` | Limits used by the UI. |
 | `GET` | `/api/health` | Server status and whether the Lorcast set list is loaded. |
 
@@ -107,6 +130,29 @@ Invalid requests return HTTP 422 and unexpected failures return HTTP 500. Both u
 - `IMAGE_DECODE_FAILED`
 - `UPSTREAM_UNAVAILABLE`
 
+### Deck list import
+
+Request (`ImportRequest`):
+
+```json
+{ "text": "4 Hercules - Spectral Demigod\n2 Not A Card\nbad line" }
+```
+
+Response (`ImportResponse`):
+
+```json
+{
+  "request_id": "2ae7a32c02d9",
+  "cards": [ { "set_code": "11", "number": "117", "quantity": 4, "name": "Hercules - Spectral Demigod" } ],
+  "issues": [
+    { "line_number": 2, "line": "2 Not A Card", "reason": "NOT_FOUND", "detail": "No card named 'Not A Card' on Lorcast" },
+    { "line_number": 3, "line": "bad line", "reason": "PARSE_ERROR", "detail": "Expected a line like '4 Hercules - Spectral Demigod'" }
+  ]
+}
+```
+
+Empty text, or text over the line or length limits, returns HTTP 422. Otherwise the response is 200 and each failed line appears in `issues`, sorted by line number, with one of these reasons: `PARSE_ERROR`, `INVALID_QUANTITY`, `NOT_FOUND`, `INVALID_RESPONSE` or `UPSTREAM_UNAVAILABLE`.
+
 ## Project layout
 
 ```
@@ -117,7 +163,8 @@ server/
   errors.py          Typed exceptions, one per failure reason
   normalization.py   Leading-zero and set-code normalization
   rate_limiter.py    Global spacing between outgoing requests
-  lorcast.py         Lorcast client: set lookup, retries, size limits, image decoding
+  lorcast.py         Lorcast client: set lookup, card search, retries, size limits, image decoding
+  deck_import.py     Deck list parsing and name-to-printing resolution
   sheets.py          Page layout, crop marks, placeholders, JPEG output
   main.py            FastAPI app, routes, middleware, error handlers
 static/              index.html, styles.css, app.js, favicon.svg
@@ -136,7 +183,8 @@ The tests use mocked HTTP responses, so they don't contact Lorcast. The `scripts
 
 - `python -m scripts.smoke_lorcast` fetches a few real cards.
 - `python -m scripts.smoke_api` posts a sample sheet to a running server and saves the pages to `smoke_output/`.
-- `python -m scripts.smoke_ui` drives the UI in headless Edge. It needs `pip install playwright`, which is not a project dependency.
+- `python -m scripts.smoke_import` posts the example deck list to a running server and prints how each line resolved.
+- `python -m scripts.smoke_ui` and `python -m scripts.smoke_import_ui` drive the UI in headless Edge, and `python -m scripts.capture_docs` regenerates the README screenshots. These need `pip install playwright`, which is not a project dependency.
 
 ## Credits
 

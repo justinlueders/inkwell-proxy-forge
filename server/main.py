@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from server.config import (
     API_CONFIG_ROUTE,
     API_HEALTH_ROUTE,
+    API_IMPORT_ROUTE,
     API_SHEET_ROUTE,
     REQUEST_DELAY_SECONDS,
     REQUEST_ID_HEADER,
@@ -31,6 +32,7 @@ from server.config import (
     USER_AGENT,
     USER_AGENT_HEADER,
 )
+from server.deck_import import parse_deck_list, resolve_deck_lines
 from server.logging_config import configure_logging, get_request_id, request_id_var
 from server.lorcast import CardFetchResult, LorcastClient
 from server.models import (
@@ -38,6 +40,8 @@ from server.models import (
     ClientConfigResponse,
     ErrorResponse,
     HealthResponse,
+    ImportRequest,
+    ImportResponse,
     SheetRequest,
     SheetResponse,
 )
@@ -228,6 +232,27 @@ async def create_sheet(sheet_request: SheetRequest, lorcast: LorcastDependency) 
         page_count=len(pages),
         errors=errors,
     )
+
+
+@app.post(API_IMPORT_ROUTE, response_model=ImportResponse)
+async def import_deck(import_request: ImportRequest, lorcast: LorcastDependency) -> ImportResponse:
+    started = time.perf_counter()
+    parsed = parse_deck_list(import_request.text)
+    logger.info("Import requested: %d card line(s), %d parse issue(s)", len(parsed.lines), len(parsed.issues))
+
+    cards, lookup_issues = await resolve_deck_lines(lorcast, parsed.lines)
+    issues = sorted([*parsed.issues, *lookup_issues], key=lambda issue: issue.line_number)
+    for issue in issues:
+        logger.warning("Import line %d not imported: %s (%s)", issue.line_number, issue.reason, issue.detail)
+
+    elapsed_ms = (time.perf_counter() - started) * MS_PER_SECOND
+    logger.info(
+        "Import completed: %d card(s) resolved, %d issue(s) in %.0f ms",
+        len(cards),
+        len(issues),
+        elapsed_ms,
+    )
+    return ImportResponse(request_id=get_request_id(), cards=cards, issues=issues)
 
 
 @app.get(API_HEALTH_ROUTE, response_model=HealthResponse)

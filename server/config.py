@@ -14,6 +14,12 @@ STATIC_DIR: Final[Path] = PROJECT_ROOT / "static"
 LORCAST_API_BASE: Final[str] = "https://api.lorcast.com/v0"
 SETS_ENDPOINT: Final[str] = "/sets"
 CARD_ENDPOINT: Final[str] = "/cards/{set_code}/{number}"
+SEARCH_ENDPOINT: Final[str] = "/cards/search"
+SEARCH_QUERY_PARAM: Final[str] = "q"
+EXACT_NAME_QUERY: Final[str] = '!name:"{name}"'
+VERSION_QUERY: Final[str] = 'v:"{version}"'
+FUZZY_TERM_QUERY: Final[str] = '"{text}"'
+NAME_VERSION_SEPARATOR: Final[str] = " - "
 USER_AGENT: Final[str] = "LorcanaProxySheetGenerator/1.0"
 USER_AGENT_HEADER: Final[str] = "User-Agent"
 
@@ -22,6 +28,7 @@ USER_AGENT_HEADER: Final[str] = "User-Agent"
 API_SHEET_ROUTE: Final[str] = "/api/sheet"
 API_HEALTH_ROUTE: Final[str] = "/api/health"
 API_CONFIG_ROUTE: Final[str] = "/api/config"
+API_IMPORT_ROUTE: Final[str] = "/api/import"
 STATIC_MOUNT_PATH: Final[str] = "/"
 STATIC_MOUNT_NAME: Final[str] = "static"
 REQUEST_ID_HEADER: Final[str] = "X-Request-ID"
@@ -73,6 +80,8 @@ MAX_QUANTITY: Final[int] = 20
 MAX_ENTRIES_PER_REQUEST: Final[int] = 60
 MAX_TOTAL_CARDS: Final[int] = 90
 MAX_IDENTIFIER_LENGTH: Final[int] = 16
+MAX_IMPORT_LINES: Final[int] = 100
+MAX_IMPORT_TEXT_LENGTH: Final[int] = 10_000
 
 # --- Logging -----------------------------------------------------------------
 

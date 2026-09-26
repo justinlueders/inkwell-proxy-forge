@@ -16,6 +16,7 @@
   --color-danger-surface: rgba(90, 16, 28, 0.85);
   --color-danger-border: #c8102e;
   --color-print-bg: #ffffff;
+  --color-backdrop: rgba(3, 5, 12, 0.72);
 
   /* Ink colors */
   --ink-amber: #f4b223;
@@ -28,6 +29,7 @@
   /* Type */
   --font-display: "Cinzel", "Trajan Pro", "Times New Roman", serif;
   --font-body: "Nunito Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
@@ -64,6 +66,9 @@
   --viewer-max-height: 72vh;
   --list-max-height: 40vh;
   --viewer-empty-min-height: 40vh;
+  --dialog-max-width: 640px;
+  --import-text-min-height: 14rem;
+  --import-issues-max-height: 30vh;
 
   /* Effects */
   --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(243, 220, 147, 0.06);
@@ -467,6 +472,17 @@ kbd {
   color: var(--color-gold);
 }
 
+.list-header__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.import-status {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--ink-emerald);
+}
+
 .empty-state {
   margin: var(--space-4) 0;
   color: var(--color-text-muted);
@@ -515,10 +531,22 @@ kbd {
   letter-spacing: var(--letter-spacing-display);
 }
 
+.card-row__id {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .card-row__set,
 .card-row__number {
   font-weight: 700;
   margin-right: var(--space-2);
+}
+
+.card-row__name {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .card-row__error {
@@ -628,6 +656,61 @@ kbd {
   margin: var(--space-2) 0 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
+}
+
+/* --- Import dialog -------------------------------------------------------- */
+
+.import-dialog {
+  width: min(var(--dialog-max-width), calc(100vw - var(--space-6)));
+  max-height: calc(100vh - var(--space-6));
+  padding: var(--space-5);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: var(--border-double) double var(--color-gold-dark);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-panel), var(--shadow-glow);
+}
+
+.import-dialog::backdrop {
+  background: var(--color-backdrop);
+  backdrop-filter: blur(4px);
+}
+
+.import-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.import-dialog__text {
+  min-height: var(--import-text-min-height);
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.import-dialog__issues {
+  max-height: var(--import-issues-max-height);
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-danger-surface);
+  border: var(--border-thin) solid var(--color-danger-border);
+  border-left-width: 6px;
+  border-radius: var(--radius-md);
+}
+
+.import-dialog__issues-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-md);
+}
+
+.import-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 /* --- Viewer --------------------------------------------------------------- */

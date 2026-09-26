@@ -57,8 +57,12 @@
 
         <div class="list-header">
           <h3 class="list-header__title">Your Deck</h3>
-          <button type="button" class="btn btn--ghost btn--small" id="clear-button" disabled>Clear all</button>
+          <div class="list-header__actions">
+            <button type="button" class="btn btn--ghost btn--small" id="import-open-button" aria-haspopup="dialog" disabled>Import</button>
+            <button type="button" class="btn btn--ghost btn--small" id="clear-button" disabled>Clear all</button>
+          </div>
         </div>
+        <p class="import-status" id="import-status" role="status" hidden></p>
 
         <p class="empty-state" id="empty-list">No cards yet. Add a set and card number above.</p>
         <ul class="card-list" id="card-list" aria-label="Cards to print"></ul>
@@ -109,6 +113,37 @@
       </section>
     </main>
 
+    <dialog class="import-dialog" id="import-dialog" aria-labelledby="import-heading">
+      <form class="import-dialog__form" id="import-form" novalidate>
+        <h2 class="panel__title" id="import-heading">Import Deck List</h2>
+        <p class="form-hint" id="import-hint">
+          Paste a deck list exported from dreamborn.ink, one <kbd>count Name - Version</kbd> per line.
+          Each card uses its standard printing; you can change the set and number in the list afterward.
+        </p>
+        <label class="field__label" for="import-text">Deck list</label>
+        <textarea class="field__input import-dialog__text" id="import-text" rows="12" spellcheck="false" autocomplete="off"
+          placeholder="4 Hercules - Spectral Demigod&#10;2 Bunch of Balloons&#10;3 The Horseman Strikes!"
+          aria-describedby="import-hint import-text-error"></textarea>
+        <p class="field__error" id="import-text-error" aria-live="polite"></p>
+
+        <div class="progress" id="import-progress" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p class="progress__text" id="import-progress-text"></p>
+        </div>
+
+        <section class="import-dialog__issues" id="import-issues" aria-live="polite" hidden>
+          <h3 class="import-dialog__issues-title" id="import-issues-title"></h3>
+          <ul class="error-panel__list" id="import-issue-list"></ul>
+          <p class="error-panel__request" id="import-request-id" hidden></p>
+        </section>
+
+        <div class="import-dialog__actions">
+          <button type="button" class="btn btn--ghost" id="import-cancel-button">Cancel</button>
+          <button type="submit" class="btn btn--primary" id="import-submit-button">Import</button>
+        </div>
+      </form>
+    </dialog>
+
     <footer class="footer">
       Card data and images from <a href="https://lorcast.com" target="_blank" rel="noopener noreferrer">Lorcast</a>.
       Unofficial fan tool for personal playtesting; not affiliated with Disney or Ravensburger.
@@ -123,6 +158,7 @@
       <span class="card-row__id">
         <span class="card-row__label">Set</span> <span class="card-row__set"></span>
         <span class="card-row__label">#</span> <span class="card-row__number"></span>
+        <span class="card-row__name"></span>
       </span>
       <label class="card-row__qty">
         <span class="visually-hidden">Quantity</span>

@@ -14,9 +14,18 @@ from server.errors import (
     UpstreamStatusError,
     UpstreamUnavailableError,
 )
-from server.lorcast import LorcastClient, parse_retry_after
+from server.lorcast import LorcastClient, build_exact_query, parse_retry_after
 from server.models import CardErrorReason, CardRequest
-from tests.conftest import IMAGE_HOST, SETS_PAYLOAD, Handler, card_payload, default_handler, make_image_bytes
+from tests.conftest import (
+    IMAGE_HOST,
+    SETS_PAYLOAD,
+    Handler,
+    card_payload,
+    default_handler,
+    make_image_bytes,
+    named_card_payload,
+    search_response,
+)
 
 MakeClient = Callable[[Handler], LorcastClient]
 
@@ -146,6 +155,14 @@ async def test_missing_large_image_maps_to_no_image(make_client: MakeClient) -> 
     assert info.value.reason is CardErrorReason.NO_IMAGE
 
 
+async def test_blank_large_image_maps_to_no_image(make_client: MakeClient) -> None:
+    payload = card_payload()
+    payload["image_uris"]["digital"] = {"small": "", "normal": "", "large": ""}
+    client = make_client(lambda request: httpx.Response(200, json=payload))
+    with pytest.raises(ImageUnavailableError):
+        await client.fetch_card_with_image(CardRequest(set_code="10", number="7"))
+
+
 async def test_corrupt_image_maps_to_decode_failed(make_client: MakeClient) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).startswith(IMAGE_HOST):
@@ -218,3 +235,93 @@ def test_parse_retry_after(header: str | None, expected: float | None) -> None:
 
 def test_sets_payload_fixture_is_valid() -> None:
     assert {item["code"] for item in SETS_PAYLOAD["results"]} == {"10", "P1"}
+
+
+# --- search_card -------------------------------------------------------------
+
+
+def test_build_exact_query_strips_quotes() -> None:
+    assert build_exact_query('Say "Hi"', None) == '!name:"Say Hi"'
+    assert build_exact_query("Hercules", "Spectral Demigod") == '!name:"Hercules" v:"Spectral Demigod"'
+
+
+async def test_search_sends_exact_query_and_picks_exact_match(make_client: MakeClient) -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries.append(request.url.params["q"])
+        # Lorcast's v: is fuzzy, so a near-miss version can come back first.
+        return search_response(
+            named_card_payload("Hercules", "Spectral Demigod Returned", "11", "200"),
+            named_card_payload("Hercules", "Spectral Demigod", "11", "117"),
+        )
+
+    card = await make_client(handler).search_card("hercules", "SPECTRAL DEMIGOD")
+    assert (card.card_set.code, card.collector_number) == ("11", "117")
+    assert queries == ['!name:"hercules" v:"SPECTRAL DEMIGOD"']
+
+
+async def test_search_without_version_matches_versionless_card(make_client: MakeClient) -> None:
+    client = make_client(lambda _: search_response(named_card_payload("Dragon Fire", None, "1", "130")))
+    card = await client.search_card("Dragon Fire", None)
+    assert card.collector_number == "130"
+
+
+async def test_search_suggests_version_when_name_needs_one(make_client: MakeClient) -> None:
+    client = make_client(lambda _: search_response(named_card_payload("Hercules", "Spectral Demigod")))
+    with pytest.raises(CardNotFoundError, match="needs a version, for example 'Hercules - Spectral Demigod'"):
+        await client.search_card("Hercules", None)
+
+
+async def test_search_falls_back_to_full_name_when_name_contains_separator(make_client: MakeClient) -> None:
+    queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["q"]
+        queries.append(query)
+        if query.startswith("!name:"):
+            return search_response()
+        return search_response(
+            named_card_payload("Card - With Dash", "Hero", "5", "9"),
+            named_card_payload("Card", "Other", "5", "10"),
+        )
+
+    card = await make_client(handler).search_card("Card", "With Dash - Hero")
+    assert card.collector_number == "9"
+    assert queries == ['!name:"Card" v:"With Dash - Hero"', '"Card - With Dash - Hero"']
+
+
+async def test_search_fallback_rejects_ambiguous_matches(make_client: MakeClient) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params["q"].startswith("!name:"):
+            return search_response()
+        return search_response(named_card_payload("A - B", "C", "1", "1"), named_card_payload("A", "B - C", "1", "2"))
+
+    with pytest.raises(CardNotFoundError, match="No card named 'A - B - C'"):
+        await make_client(handler).search_card("A", "B - C")
+
+
+async def test_search_with_no_results_is_not_found(make_client: MakeClient) -> None:
+    with pytest.raises(CardNotFoundError, match="No card named 'Nope'"):
+        await make_client(lambda _: search_response()).search_card("Nope", None)
+
+
+async def test_search_skips_malformed_results(make_client: MakeClient) -> None:
+    client = make_client(
+        lambda _: search_response({"name": "broken"}, named_card_payload("Dragon Fire", None, "1", "130"))
+    )
+    card = await client.search_card("Dragon Fire", None)
+    assert card.collector_number == "130"
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[]", b'{"results": "nope"}', b"{}"])
+async def test_search_bad_payload_is_invalid_response(make_client: MakeClient, body: bytes) -> None:
+    client = make_client(lambda _: httpx.Response(200, content=body))
+    with pytest.raises(InvalidResponseError):
+        await client.search_card("Dragon Fire", None)
+
+
+async def test_search_upstream_failure_is_unavailable(make_client: MakeClient) -> None:
+    client = make_client(lambda _: httpx.Response(503))
+    with pytest.raises(UpstreamUnavailableError):
+        await client.search_card("Dragon Fire", None)

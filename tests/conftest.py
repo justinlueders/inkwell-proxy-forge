@@ -41,6 +41,14 @@ def card_payload(set_code: str = "10", number: str = "7", *, layout: str = "norm
     }
 
 
+def named_card_payload(name: str, version: str | None, set_code: str = "10", number: str = "7") -> dict[str, Any]:
+    return {**card_payload(set_code, number), "name": name, "version": version}
+
+
+def search_response(*cards: dict[str, Any]) -> httpx.Response:
+    return httpx.Response(200, json={"results": list(cards)})
+
+
 async def no_sleep(_: float) -> None:
     return None
 

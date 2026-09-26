@@ -1,13 +1,22 @@
 import base64
 from collections.abc import Callable, Iterator
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from server.config import API_CONFIG_ROUTE, API_HEALTH_ROUTE, API_SHEET_ROUTE, REQUEST_ID_HEADER
+from server.config import (
+    API_CONFIG_ROUTE,
+    API_HEALTH_ROUTE,
+    API_IMPORT_ROUTE,
+    API_SHEET_ROUTE,
+    MAX_IMPORT_LINES,
+    MAX_IMPORT_TEXT_LENGTH,
+    REQUEST_ID_HEADER,
+)
 from server.lorcast import LorcastClient
 from server.main import app, get_lorcast_client
-from tests.conftest import Handler, default_handler
+from tests.conftest import Handler, default_handler, named_card_payload, search_response
 
 JPEG_MAGIC = b"\xff\xd8"
 
@@ -82,6 +91,73 @@ def test_config_and_health(api: TestClient) -> None:
     assert config["cards_per_page"] == 9
     health = api.get(API_HEALTH_ROUTE).json()
     assert health["status"] == "ok"
+
+
+SEARCHABLE_CARDS = {
+    "hercules": named_card_payload("Hercules", "Spectral Demigod", "11", "117"),
+    "dragon fire": named_card_payload("Dragon Fire", None, "1", "130"),
+}
+
+
+def search_handler(request: httpx.Request) -> httpx.Response:
+    query = request.url.params.get("q", "").casefold()
+    matches = [card for key, card in SEARCHABLE_CARDS.items() if f'"{key}"' in query]
+    return search_response(*matches)
+
+
+@pytest.fixture
+def import_api(make_client: Callable[[Handler], LorcastClient]) -> Iterator[TestClient]:
+    lorcast = make_client(search_handler)
+    app.dependency_overrides[get_lorcast_client] = lambda: lorcast
+    client = TestClient(app, raise_server_exceptions=False)
+    yield client
+    app.dependency_overrides.clear()
+
+
+def test_import_resolves_cards_and_reports_issues_in_line_order(import_api: TestClient) -> None:
+    text = "4 Hercules - Spectral Demigod\nnot a line\n2 Dragon Fire\n1 Missing Card\n1 dragon fire"
+    response = import_api.post(API_IMPORT_ROUTE, json={"text": text})
+    assert response.status_code == 200
+    data = response.json()
+    assert [(card["set_code"], card["number"], card["quantity"]) for card in data["cards"]] == [
+        ("11", "117", 4),
+        ("1", "130", 3),
+    ]
+    assert data["cards"][0]["name"] == "Hercules - Spectral Demigod"
+    assert [(issue["line_number"], issue["reason"]) for issue in data["issues"]] == [
+        (2, "PARSE_ERROR"),
+        (4, "NOT_FOUND"),
+    ]
+    assert data["issues"][0]["line"] == "not a line"
+    assert response.headers[REQUEST_ID_HEADER] == data["request_id"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "   \n\n", "1 Dragon Fire\n" * (MAX_IMPORT_LINES + 1), "x" * (MAX_IMPORT_TEXT_LENGTH + 1)],
+)
+def test_import_rejects_empty_or_oversized_text(import_api: TestClient, text: str) -> None:
+    response = import_api.post(API_IMPORT_ROUTE, json={"text": text})
+    assert response.status_code == 422
+    assert set(response.json()) == {"request_id", "message", "details"}
+
+
+def test_import_upstream_outage_is_reported_per_line(make_client: Callable[[Handler], LorcastClient]) -> None:
+    lorcast = make_client(lambda _: httpx.Response(503))
+    app.dependency_overrides[get_lorcast_client] = lambda: lorcast
+    try:
+        response = TestClient(app, raise_server_exceptions=False).post(API_IMPORT_ROUTE, json={"text": "1 Dragon Fire"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    assert response.json()["cards"] == []
+    assert response.json()["issues"][0]["reason"] == "UPSTREAM_UNAVAILABLE"
+
+
+def test_config_exposes_import_limits(api: TestClient) -> None:
+    config = api.get(API_CONFIG_ROUTE).json()
+    assert config["max_import_lines"] == MAX_IMPORT_LINES
+    assert config["max_import_text_length"] == MAX_IMPORT_TEXT_LENGTH
 
 
 def test_index_is_served(api: TestClient) -> None:

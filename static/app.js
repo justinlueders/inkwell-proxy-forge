@@ -3,6 +3,7 @@
 const API_ROUTES = Object.freeze({
   CONFIG: "/api/config",
   SHEET: "/api/sheet",
+  IMPORT: "/api/import",
 });
 
 const CONFIG = Object.freeze({
@@ -24,6 +25,10 @@ const CONFIG = Object.freeze({
   ABORT_REASON_TIMEOUT: "timeout",
   ABORT_REASON_CANCEL: "cancel",
   FIRST_PAGE_INDEX: 0,
+  ESTIMATED_NETWORK_SECONDS_PER_SEARCH: 0.3,
+  MAX_SEARCHES_PER_IMPORT_LINE: 2,
+  LINE_BREAK_PATTERN: /\r\n|\r|\n/,
+  LINE_BREAK: "\n",
 });
 
 const MESSAGES = Object.freeze({
@@ -55,6 +60,18 @@ const MESSAGES = Object.freeze({
   REQUEST_ID: (id) => `Request id: ${id}`,
   PAGE_COUNTER: (current, total) => `Page ${current} of ${total}`,
   PAGE_ALT: (current, total) => `Proxy sheet page ${current} of ${total}`,
+  IMPORT_EMPTY: "Paste at least one line, e.g. 4 Hercules - Spectral Demigod",
+  IMPORT_TOO_LONG: (max) => `The deck list is too long; the limit is ${max} characters`,
+  IMPORT_TOO_MANY_LINES: (count, max) => `${count} lines is over the ${max}-line limit`,
+  IMPORT_WORKING: (seconds) => `Looking up cards on Lorcast... about ${seconds}s`,
+  IMPORT_DONE: (added, copies) =>
+    `Imported ${added} ${added === 1 ? "card" : "cards"} (${copies} ${copies === 1 ? "copy" : "copies"})`,
+  IMPORT_PARTIAL_TITLE: (added, problems) =>
+    `Imported ${added} ${added === 1 ? "card" : "cards"}; ${problems} ${problems === 1 ? "line needs" : "lines need"} attention`,
+  IMPORT_FAILED_TITLE: "No cards were imported",
+  IMPORT_ISSUE: (issue) => `Line ${issue.line_number}: ${issue.line} - ${issue.detail}`,
+  IMPORT_SKIPPED: (label, reason) => `${label} skipped: ${reason}`,
+  IMPORTED_CARD_LABEL: (setCode, number, name) => `Set ${setCode} #${number} ${name}`,
 });
 
 const state = {
@@ -63,7 +80,7 @@ const state = {
   pages: [],
   pageIndex: CONFIG.FIRST_PAGE_INDEX,
   controller: null,
-  abortReason: null,
+  importOperation: null,
 };
 
 const dom = {
@@ -100,6 +117,20 @@ const dom = {
   nextPage: document.getElementById("next-page"),
   printButton: document.getElementById("print-button"),
   printRoot: document.getElementById("print-root"),
+  importOpenButton: document.getElementById("import-open-button"),
+  importStatus: document.getElementById("import-status"),
+  importDialog: document.getElementById("import-dialog"),
+  importForm: document.getElementById("import-form"),
+  importText: document.getElementById("import-text"),
+  importTextError: document.getElementById("import-text-error"),
+  importProgress: document.getElementById("import-progress"),
+  importProgressText: document.getElementById("import-progress-text"),
+  importIssues: document.getElementById("import-issues"),
+  importIssuesTitle: document.getElementById("import-issues-title"),
+  importIssueList: document.getElementById("import-issue-list"),
+  importRequestId: document.getElementById("import-request-id"),
+  importSubmitButton: document.getElementById("import-submit-button"),
+  importCancelButton: document.getElementById("import-cancel-button"),
   rowTemplate: document.getElementById("card-row-template"),
   errorItemTemplate: document.getElementById("error-item-template"),
 };
@@ -264,6 +295,10 @@ function renderList() {
     const errorElement = row.querySelector(".card-row__error");
     row.querySelector(".card-row__set").textContent = entry.setCode;
     row.querySelector(".card-row__number").textContent = entry.number;
+    if (entry.name) {
+      row.querySelector(".card-row__name").textContent = entry.name;
+      row.querySelector(".card-row__id").title = MESSAGES.IMPORTED_CARD_LABEL(entry.setCode, entry.number, entry.name);
+    }
     input.min = String(state.limits.min_quantity);
     input.max = String(state.limits.max_quantity);
     input.value = String(entry.quantity);
@@ -287,6 +322,7 @@ function updateSummary() {
   dom.summaryPagesUnit.textContent = MESSAGES.PAGE_UNIT(pages);
   dom.emptyList.hidden = state.entries.length > 0;
   dom.clearButton.disabled = state.entries.length === 0 || busy;
+  dom.importOpenButton.disabled = busy;
   dom.limitWarning.hidden = !overLimit;
   dom.limitWarning.textContent = overLimit ? MESSAGES.OVER_LIMIT(cards, state.limits.max_total_cards) : "";
   dom.generateButton.disabled = state.entries.length === 0 || overLimit || busy;
@@ -337,83 +373,272 @@ async function readJson(response) {
   }
 }
 
-async function generateSheet() {
-  hideErrors();
-  const controller = new AbortController();
-  state.controller = controller;
-  state.abortReason = null;
-  setBusy(true);
+// An operation is one in-flight request that can be cancelled or time out.
+function startOperation(timeoutSeconds) {
+  const operation = { controller: new AbortController(), abortReason: null, timeoutId: null };
+  operation.timeoutId = window.setTimeout(
+    () => abortOperation(operation, CONFIG.ABORT_REASON_TIMEOUT),
+    timeoutSeconds * CONFIG.MS_PER_SECOND,
+  );
+  return operation;
+}
 
-  const timeoutMs = (estimateSeconds() + CONFIG.TIMEOUT_BUFFER_SECONDS) * CONFIG.MS_PER_SECOND;
-  const timeoutId = window.setTimeout(() => abortRequest(CONFIG.ABORT_REASON_TIMEOUT), timeoutMs);
-  const body = {
-    cards: state.entries.map((entry) => ({ set_code: entry.setCode, number: entry.number, quantity: entry.quantity })),
-  };
+function abortOperation(operation, reason) {
+  if (operation && !operation.controller.signal.aborted) {
+    operation.abortReason = reason;
+    operation.controller.abort();
+  }
+}
 
+function finishOperation(operation) {
+  window.clearTimeout(operation.timeoutId);
+}
+
+function failure(title, details = [], requestId = null) {
+  return { ok: false, cancelled: false, title, details, requestId };
+}
+
+/** POST JSON and classify every outcome: success, cancel, timeout, network, HTTP error, or unreadable body. */
+async function postJson(route, body, operation) {
+  let response;
   try {
-    const response = await fetch(API_ROUTES.SHEET, {
+    response = await fetch(route, {
       method: CONFIG.POST_METHOD,
       headers: {
         [CONFIG.CONTENT_TYPE_HEADER]: CONFIG.JSON_CONTENT_TYPE,
         [CONFIG.ACCEPT_HEADER]: CONFIG.JSON_CONTENT_TYPE,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: operation.controller.signal,
     });
-    const requestId = response.headers.get(CONFIG.REQUEST_ID_HEADER);
-    const data = await readJson(response);
-    handleResponse(response, data, requestId);
   } catch (error) {
-    handleFetchFailure(error);
+    if (error.name === CONFIG.ABORT_ERROR_NAME) {
+      if (operation.abortReason === CONFIG.ABORT_REASON_TIMEOUT) {
+        return failure(MESSAGES.TIMEOUT_TITLE, [MESSAGES.TIMEOUT_DETAIL]);
+      }
+      return { ...failure(MESSAGES.CANCELLED_TITLE), cancelled: true };
+    }
+    console.error(`Request to ${route} failed`, error);
+    return failure(MESSAGES.NETWORK_TITLE, [MESSAGES.NETWORK_DETAIL]);
+  }
+
+  const headerRequestId = response.headers.get(CONFIG.REQUEST_ID_HEADER);
+  const data = await readJson(response);
+  const requestId = data?.request_id ?? headerRequestId;
+  if (data === undefined) {
+    return failure(response.ok ? MESSAGES.BAD_JSON_TITLE : MESSAGES.HTTP_TITLE(response.status), [], requestId);
+  }
+  if (!response.ok) {
+    const details = Array.isArray(data.details) ? data.details : [];
+    const title = typeof data.message === "string" ? data.message : MESSAGES.HTTP_TITLE(response.status);
+    return failure(title, details, requestId);
+  }
+  return { ok: true, data, requestId };
+}
+
+async function generateSheet() {
+  hideErrors();
+  const operation = startOperation(estimateSeconds() + CONFIG.TIMEOUT_BUFFER_SECONDS);
+  state.controller = operation;
+  setBusy(true);
+  const body = {
+    cards: state.entries.map((entry) => ({ set_code: entry.setCode, number: entry.number, quantity: entry.quantity })),
+  };
+
+  try {
+    const result = await postJson(API_ROUTES.SHEET, body, operation);
+    if (!result.ok) {
+      showErrors(result.title, result.details, result.requestId);
+      return;
+    }
+    handleSheet(result.data, result.requestId);
   } finally {
-    window.clearTimeout(timeoutId);
+    finishOperation(operation);
     state.controller = null;
     setBusy(false);
   }
 }
 
-function abortRequest(reason) {
-  if (state.controller) {
-    state.abortReason = reason;
-    state.controller.abort();
-  }
-}
-
-function handleFetchFailure(error) {
-  if (error.name === CONFIG.ABORT_ERROR_NAME) {
-    if (state.abortReason === CONFIG.ABORT_REASON_TIMEOUT) {
-      showErrors(MESSAGES.TIMEOUT_TITLE, [MESSAGES.TIMEOUT_DETAIL]);
-    } else {
-      showErrors(MESSAGES.CANCELLED_TITLE);
-    }
-    return;
-  }
-  console.error("Sheet request failed", error);
-  showErrors(MESSAGES.NETWORK_TITLE, [MESSAGES.NETWORK_DETAIL]);
-}
-
-function handleResponse(response, data, headerRequestId) {
-  const requestId = data?.request_id ?? headerRequestId;
-  if (data === undefined) {
-    showErrors(response.ok ? MESSAGES.BAD_JSON_TITLE : MESSAGES.HTTP_TITLE(response.status), [], requestId);
-    return;
-  }
-  if (!response.ok) {
-    const details = Array.isArray(data.details) ? data.details : [];
-    const title = typeof data.message === "string" ? data.message : MESSAGES.HTTP_TITLE(response.status);
-    showErrors(title, details, requestId);
-    return;
-  }
+function handleSheet(data, requestId) {
   if (!Array.isArray(data.pages) || !Array.isArray(data.errors)) {
     showErrors(MESSAGES.BAD_JSON_TITLE, [], requestId);
     return;
   }
-
   showPages(data.pages);
   if (data.errors.length > 0) {
     const title = data.pages.length === 0 ? MESSAGES.ALL_FAILED_TITLE : MESSAGES.PARTIAL_TITLE(data.errors.length);
     showErrors(title, data.errors.map(MESSAGES.CARD_ERROR), requestId);
   }
+}
+
+// --- Import ------------------------------------------------------------------
+
+function countNonBlankLines(text) {
+  return text.split(CONFIG.LINE_BREAK_PATTERN).filter((line) => line.trim()).length;
+}
+
+function estimateImportSeconds(lineCount) {
+  return Math.ceil(lineCount * (state.limits.request_delay_seconds + CONFIG.ESTIMATED_NETWORK_SECONDS_PER_SEARCH));
+}
+
+function importTimeoutSeconds(lineCount) {
+  const perLine =
+    CONFIG.MAX_SEARCHES_PER_IMPORT_LINE *
+    (state.limits.request_delay_seconds + CONFIG.ESTIMATED_NETWORK_SECONDS_PER_SEARCH);
+  return Math.ceil(lineCount * perLine) + CONFIG.TIMEOUT_BUFFER_SECONDS;
+}
+
+function setImportBusy(busy) {
+  dom.importText.readOnly = busy;
+  dom.importSubmitButton.disabled = busy;
+  dom.importProgress.hidden = !busy;
+}
+
+function clearImportIssues() {
+  dom.importIssues.hidden = true;
+  dom.importIssueList.replaceChildren();
+  dom.importRequestId.hidden = true;
+}
+
+function showImportIssues(title, details, requestId = null) {
+  dom.importIssuesTitle.textContent = title;
+  const items = details.map((detail) => {
+    const item = dom.errorItemTemplate.content.firstElementChild.cloneNode(true);
+    item.textContent = detail;
+    return item;
+  });
+  dom.importIssueList.replaceChildren(...items);
+  dom.importRequestId.hidden = !requestId;
+  dom.importRequestId.textContent = requestId ? MESSAGES.REQUEST_ID(requestId) : "";
+  dom.importIssues.hidden = false;
+  console.warn(title, { details, requestId });
+}
+
+function openImportDialog() {
+  setFieldError(dom.importText, dom.importTextError, "");
+  clearImportIssues();
+  dom.importDialog.showModal();
+  dom.importText.focus();
+}
+
+function closeImportDialog() {
+  abortOperation(state.importOperation, CONFIG.ABORT_REASON_CANCEL);
+  if (dom.importDialog.open) {
+    dom.importDialog.close();
+  }
+}
+
+function validateImportText() {
+  const text = dom.importText.value;
+  const lineCount = countNonBlankLines(text);
+  let message = "";
+  if (lineCount === 0) {
+    message = MESSAGES.IMPORT_EMPTY;
+  } else if (text.length > state.limits.max_import_text_length) {
+    message = MESSAGES.IMPORT_TOO_LONG(state.limits.max_import_text_length);
+  } else if (lineCount > state.limits.max_import_lines) {
+    message = MESSAGES.IMPORT_TOO_MANY_LINES(lineCount, state.limits.max_import_lines);
+  }
+  setFieldError(dom.importText, dom.importTextError, message);
+  return message ? null : { text, lineCount };
+}
+
+/** Add imported cards to the list, honoring the same limits as manual entry. Returns skip messages. */
+function mergeImportedCards(cards) {
+  const skipped = [];
+  let copies = 0;
+  let added = 0;
+  for (const card of cards) {
+    const setCode = normalizeIdentifier(String(card.set_code));
+    const number = normalizeIdentifier(String(card.number));
+    const quantity = Number(card.quantity);
+    const label = MESSAGES.IMPORTED_CARD_LABEL(setCode, number, card.name);
+    const key = entryKey(setCode, number);
+    const existing = state.entries.find((entry) => entry.key === key);
+    const currentQuantity = existing ? existing.quantity : 0;
+
+    let reason = null;
+    if (!existing && state.entries.length >= state.limits.max_entries) {
+      reason = MESSAGES.ENTRY_CAP(state.limits.max_entries);
+    } else if (currentQuantity + quantity > state.limits.max_quantity) {
+      reason = MESSAGES.CARD_QUANTITY_CAP(state.limits.max_quantity);
+    } else if (totalCards() + quantity > state.limits.max_total_cards) {
+      reason = MESSAGES.TOTAL_CAP(state.limits.max_total_cards);
+    }
+    if (reason) {
+      skipped.push(MESSAGES.IMPORT_SKIPPED(label, reason));
+      continue;
+    }
+
+    if (existing) {
+      existing.quantity += quantity;
+      existing.name = existing.name || card.name;
+    } else {
+      state.entries.push({ key, setCode, number, quantity, name: card.name });
+    }
+    added += 1;
+    copies += quantity;
+  }
+  renderList();
+  return { added, copies, skipped };
+}
+
+function showImportStatus(added, copies) {
+  dom.importStatus.hidden = added === 0;
+  dom.importStatus.textContent = added > 0 ? MESSAGES.IMPORT_DONE(added, copies) : "";
+}
+
+async function submitImport(event) {
+  event.preventDefault();
+  if (state.importOperation) {
+    return;
+  }
+  const input = validateImportText();
+  if (!input) {
+    dom.importText.focus();
+    return;
+  }
+
+  clearImportIssues();
+  const operation = startOperation(importTimeoutSeconds(input.lineCount));
+  state.importOperation = operation;
+  dom.importProgressText.textContent = MESSAGES.IMPORT_WORKING(estimateImportSeconds(input.lineCount));
+  setImportBusy(true);
+
+  try {
+    const result = await postJson(API_ROUTES.IMPORT, { text: input.text }, operation);
+    if (result.cancelled) {
+      return;
+    }
+    if (!result.ok) {
+      showImportIssues(result.title, result.details, result.requestId);
+      return;
+    }
+    handleImport(result.data, result.requestId);
+  } finally {
+    finishOperation(operation);
+    state.importOperation = null;
+    setImportBusy(false);
+  }
+}
+
+function handleImport(data, requestId) {
+  if (!Array.isArray(data.cards) || !Array.isArray(data.issues)) {
+    showImportIssues(MESSAGES.BAD_JSON_TITLE, [], requestId);
+    return;
+  }
+  const { added, copies, skipped } = mergeImportedCards(data.cards);
+  showImportStatus(added, copies);
+
+  const details = [...data.issues.map(MESSAGES.IMPORT_ISSUE), ...skipped];
+  if (details.length === 0) {
+    closeImportDialog();
+    return;
+  }
+  // Leave only the lines that failed so they can be fixed and imported again.
+  dom.importText.value = data.issues.map((issue) => issue.line).join(CONFIG.LINE_BREAK);
+  const title = added > 0 ? MESSAGES.IMPORT_PARTIAL_TITLE(added, details.length) : MESSAGES.IMPORT_FAILED_TITLE;
+  showImportIssues(title, details, requestId);
 }
 
 // --- Viewer and print --------------------------------------------------------
@@ -495,7 +720,13 @@ function bindEvents() {
   dom.form.addEventListener("submit", addEntry);
   dom.clearButton.addEventListener("click", clearEntries);
   dom.generateButton.addEventListener("click", generateSheet);
-  dom.cancelButton.addEventListener("click", () => abortRequest(CONFIG.ABORT_REASON_CANCEL));
+  dom.cancelButton.addEventListener("click", () => abortOperation(state.controller, CONFIG.ABORT_REASON_CANCEL));
+  dom.importOpenButton.addEventListener("click", openImportDialog);
+  dom.importForm.addEventListener("submit", submitImport);
+  dom.importCancelButton.addEventListener("click", closeImportDialog);
+  // Escape fires "cancel"; any way the dialog closes must also stop an in-flight lookup.
+  dom.importDialog.addEventListener("cancel", () => abortOperation(state.importOperation, CONFIG.ABORT_REASON_CANCEL));
+  dom.importDialog.addEventListener("close", () => abortOperation(state.importOperation, CONFIG.ABORT_REASON_CANCEL));
   dom.errorDismiss.addEventListener("click", hideErrors);
   dom.prevPage.addEventListener("click", () => changePage(-1));
   dom.nextPage.addEventListener("click", () => changePage(1));

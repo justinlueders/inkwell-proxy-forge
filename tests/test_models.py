@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.config import MAX_ENTRIES_PER_REQUEST, MAX_QUANTITY, MAX_TOTAL_CARDS, MIN_QUANTITY
-from server.models import CardLayout, CardRequest, LorcastCard, SheetRequest
+from server.models import CardLayout, CardRequest, ImageSize, LorcastCard, SheetRequest
 from tests.conftest import card_payload
 
 
@@ -63,6 +63,15 @@ def test_sheet_request_rejects_merged_quantity_over_cap() -> None:
                 CardRequest(set_code="10", number="007", quantity=MIN_QUANTITY),
             ]
         )
+
+
+def test_blank_image_urls_are_treated_as_missing() -> None:
+    payload = card_payload()
+    payload["image_uris"]["digital"] = {"small": "", "normal": " ", "large": "https://cards.test/a.avif"}
+    card = LorcastCard.model_validate(payload)
+    assert card.image_url(ImageSize.SMALL) is None
+    assert card.image_url(ImageSize.NORMAL) is None
+    assert str(card.image_url(ImageSize.LARGE)) == "https://cards.test/a.avif"
 
 
 def test_lorcast_card_unknown_layout_falls_back_to_normal() -> None:
