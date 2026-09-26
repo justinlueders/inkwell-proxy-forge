@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from server.config import MAX_ENTRIES_PER_REQUEST, MAX_QUANTITY, MAX_TOTAL_CARDS, MIN_QUANTITY
-from server.models import CardLayout, CardRequest, ImageSize, LorcastCard, SheetRequest
+from server.models import CardLayout, CardRequest, ImageSize, Ink, LorcastCard, SheetRequest
 from tests.conftest import card_payload
 
 
@@ -77,3 +77,26 @@ def test_blank_image_urls_are_treated_as_missing() -> None:
 def test_lorcast_card_unknown_layout_falls_back_to_normal() -> None:
     card = LorcastCard.model_validate(card_payload(layout="hexagon"))
     assert card.layout is CardLayout.NORMAL
+
+
+@pytest.mark.parametrize(
+    ("ink", "inks", "expected"),
+    [
+        ("Amber", ["Amber"], (Ink.AMBER,)),
+        (None, ["Steel"], (Ink.STEEL,)),
+        ("Ruby", None, (Ink.RUBY,)),
+        ("Ruby", [], (Ink.RUBY,)),
+        (None, ["Amber", "Steel", "Amber"], (Ink.AMBER, Ink.STEEL)),
+        (None, ["Glitter", "Emerald"], (Ink.EMERALD,)),
+        (None, None, ()),
+    ],
+)
+def test_lorcast_card_collects_inks(ink: str | None, inks: list[str] | None, expected: tuple[Ink, ...]) -> None:
+    payload = {**card_payload(), "ink": ink, "inks": inks}
+    assert LorcastCard.model_validate(payload).inks == expected
+
+
+def test_lorcast_card_without_ink_fields_has_no_inks() -> None:
+    payload = card_payload()
+    del payload["ink"], payload["inks"]
+    assert LorcastCard.model_validate(payload).inks == ()

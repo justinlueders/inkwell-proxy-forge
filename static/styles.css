@@ -25,6 +25,7 @@
   --ink-ruby: #d1203a;
   --ink-sapphire: #1a82c9;
   --ink-steel: #9aa7b3;
+  --ink-unknown: #5a6180;
 
   /* Type */
   --font-display: "Cinzel", "Trajan Pro", "Times New Roman", serif;
@@ -58,6 +59,7 @@
   --hex-size: 64px;
   --spinner-size: 28px;
   --gem-size: 10px;
+  --gem-glow-size: 8px;
   --icon-button-size: 2rem;
   --field-narrow-width: 5.5rem;
   --qty-input-width: 4.5rem;
@@ -510,19 +512,26 @@ kbd {
 }
 
 .card-row__gem {
+  --gem-primary: var(--ink-unknown);
+  --gem-secondary: var(--gem-primary);
   width: var(--gem-size);
   height: var(--gem-size);
   transform: rotate(45deg);
-  background: var(--row-ink, var(--ink-sapphire));
-  box-shadow: 0 0 8px var(--row-ink, var(--ink-sapphire));
+  /* 45deg splits a rotated square into left and right halves for dual-ink cards. */
+  background: linear-gradient(45deg, var(--gem-primary) 50%, var(--gem-secondary) 50%);
+  box-shadow: 0 0 var(--gem-glow-size) var(--gem-primary);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.card-row:nth-child(6n + 1) { --row-ink: var(--ink-amber); }
-.card-row:nth-child(6n + 2) { --row-ink: var(--ink-amethyst); }
-.card-row:nth-child(6n + 3) { --row-ink: var(--ink-emerald); }
-.card-row:nth-child(6n + 4) { --row-ink: var(--ink-ruby); }
-.card-row:nth-child(6n + 5) { --row-ink: var(--ink-sapphire); }
-.card-row:nth-child(6n + 6) { --row-ink: var(--ink-steel); }
+.card-row__gem--unknown {
+  background: transparent;
+  border: var(--border-thin) solid var(--ink-unknown);
+  box-shadow: none;
+}
+
+.card-row__name--missing {
+  color: var(--color-danger);
+}
 
 .card-row__label {
   font-size: var(--font-size-xs);

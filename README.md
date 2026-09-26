@@ -8,6 +8,7 @@ A small local web app that builds printable **Disney Lorcana proxy sheets**. You
 
 - Enter cards as set / card number / quantity. Leading zeros are fine (`010` / `007` becomes set 10, card 7), and set codes are matched case-insensitively (`p1` finds `P1`).
 - Duplicate entries are merged and their quantities summed.
+- Each row shows the card's name and a gem in its ink color (split in two for dual-ink cards). A hollow gem means the color isn't known yet, and a card that doesn't exist is flagged as "Not found on Lorcast" before you forge the sheet.
 - **Import** a deck list pasted from [dreamborn.ink](https://dreamborn.ink) (`4 Hercules - Spectral Demigod`, one card per line). Each card is looked up on Lorcast and added using its standard printing.
 - The server fetches the **large** image for each unique card, with at least **75 ms between every request** to Lorcast (card lookups, image downloads, and retries).
 - Pages are **2550 x 3300 px (8.5 x 11 in at 300 DPI)** with cards at true size, **2.5 x 3.5 in**, in a 3 x 3 grid.
@@ -99,6 +100,7 @@ Set the `LOG_LEVEL` environment variable (for example `DEBUG`) to see every Lorc
 | --- | --- | --- |
 | `POST` | `/api/sheet` | Build a sheet. Returns base64 JPEG pages plus per-card errors. |
 | `POST` | `/api/import` | Resolve a pasted deck list to set and card numbers. |
+| `GET` | `/api/card?set_code=11&number=117` | Name and ink colors for one card (`CardInfoResponse`). 404 if it doesn't exist, 502 if Lorcast is unavailable. |
 | `GET` | `/api/config` | Limits used by the UI. |
 | `GET` | `/api/health` | Server status and whether the Lorcast set list is loaded. |
 
@@ -143,7 +145,7 @@ Response (`ImportResponse`):
 ```json
 {
   "request_id": "2ae7a32c02d9",
-  "cards": [ { "set_code": "11", "number": "117", "quantity": 4, "name": "Hercules - Spectral Demigod" } ],
+  "cards": [ { "set_code": "11", "number": "117", "quantity": 4, "name": "Hercules - Spectral Demigod", "inks": ["Ruby"] } ],
   "issues": [
     { "line_number": 2, "line": "2 Not A Card", "reason": "NOT_FOUND", "detail": "No card named 'Not A Card' on Lorcast" },
     { "line_number": 3, "line": "bad line", "reason": "PARSE_ERROR", "detail": "Expected a line like '4 Hercules - Spectral Demigod'" }

@@ -10,7 +10,7 @@ from http import HTTPStatus
 from typing import Annotated, Any
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,10 +18,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from server.config import (
+    API_CARD_ROUTE,
     API_CONFIG_ROUTE,
     API_HEALTH_ROUTE,
     API_IMPORT_ROUTE,
     API_SHEET_ROUTE,
+    MAX_IDENTIFIER_LENGTH,
     REQUEST_DELAY_SECONDS,
     REQUEST_ID_HEADER,
     REQUEST_ID_LENGTH,
@@ -34,9 +36,12 @@ from server.config import (
 )
 from server.deck_import import parse_deck_list, resolve_deck_lines
 from server.logging_config import configure_logging, get_request_id, request_id_var
+from server.errors import LorcastError
 from server.lorcast import CardFetchResult, LorcastClient
 from server.models import (
     CardError,
+    CardErrorReason,
+    CardInfoResponse,
     ClientConfigResponse,
     ErrorResponse,
     HealthResponse,
@@ -45,6 +50,7 @@ from server.models import (
     SheetRequest,
     SheetResponse,
 )
+from server.normalization import normalize_identifier
 from server.rate_limiter import RateLimiter
 from server.sheets import Placeholder, SheetEntry, render_pages_base64
 
@@ -59,6 +65,7 @@ BODY_LOCATION = "body"
 VALUE_ERROR_PREFIX = "Value error, "
 MS_PER_SECOND = 1000
 VALIDATION_FAILED_MESSAGE = "The card list is not valid."
+BLANK_IDENTIFIER_MESSAGE = "Set and card number are required."
 INTERNAL_ERROR_MESSAGE = "Something went wrong while building the sheet. Check the server logs for this request id."
 
 
@@ -253,6 +260,38 @@ async def import_deck(import_request: ImportRequest, lorcast: LorcastDependency)
         elapsed_ms,
     )
     return ImportResponse(request_id=get_request_id(), cards=cards, issues=issues)
+
+
+IdentifierQuery = Annotated[str, Query(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]
+LOOKUP_NOT_FOUND_REASONS = frozenset({CardErrorReason.NOT_FOUND, CardErrorReason.UNKNOWN_SET})
+
+
+@app.get(
+    API_CARD_ROUTE,
+    response_model=CardInfoResponse,
+    responses={HTTPStatus.NOT_FOUND: {"model": ErrorResponse}, HTTPStatus.BAD_GATEWAY: {"model": ErrorResponse}},
+)
+async def card_info(set_code: IdentifierQuery, number: IdentifierQuery, lorcast: LorcastDependency) -> Any:
+    """Name and ink colors for one card, so hand-entered rows can be labeled."""
+    set_code = normalize_identifier(set_code)
+    number = normalize_identifier(number)
+    if not set_code or not number:
+        return _error_response(HTTPStatus.UNPROCESSABLE_ENTITY, BLANK_IDENTIFIER_MESSAGE)
+    if not lorcast.sets_loaded:
+        await lorcast.load_sets()
+    try:
+        card = await lorcast.fetch_card(set_code, number)
+    except LorcastError as exc:
+        status = HTTPStatus.NOT_FOUND if exc.reason in LOOKUP_NOT_FOUND_REASONS else HTTPStatus.BAD_GATEWAY
+        logger.info("Card lookup %s/%s failed: %s (%s)", set_code, number, exc.reason, exc.detail)
+        return _error_response(status, exc.detail)
+    return CardInfoResponse(
+        request_id=get_request_id(),
+        set_code=card.card_set.code,
+        number=card.collector_number,
+        name=card.display_name,
+        inks=list(card.inks),
+    )
 
 
 @app.get(API_HEALTH_ROUTE, response_model=HealthResponse)

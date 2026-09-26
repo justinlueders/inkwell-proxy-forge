@@ -37,6 +37,8 @@ def card_payload(set_code: str = "10", number: str = "7", *, layout: str = "norm
         "layout": layout,
         "image_uris": {"digital": digital},
         "collector_number": number,
+        "ink": "Amber",
+        "inks": ["Amber"],
         "set": {"id": f"set_{set_code}", "code": set_code, "name": "Test Set"},
     }
 

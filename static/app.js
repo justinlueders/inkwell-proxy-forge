@@ -4,6 +4,14 @@ const API_ROUTES = Object.freeze({
   CONFIG: "/api/config",
   SHEET: "/api/sheet",
   IMPORT: "/api/import",
+  CARD: "/api/card",
+});
+
+const LOOKUP = Object.freeze({
+  PENDING: "pending",
+  DONE: "done",
+  NOT_FOUND: "not-found",
+  FAILED: "failed",
 });
 
 const CONFIG = Object.freeze({
@@ -13,6 +21,22 @@ const CONFIG = Object.freeze({
   ACCEPT_HEADER: "Accept",
   REQUEST_ID_HEADER: "X-Request-ID",
   POST_METHOD: "POST",
+  GET_METHOD: "GET",
+  HTTP_NOT_FOUND: 404,
+  LOOKUP_TIMEOUT_SECONDS: 20,
+  INK_CSS_VARS: Object.freeze({
+    Amber: "--ink-amber",
+    Amethyst: "--ink-amethyst",
+    Emerald: "--ink-emerald",
+    Ruby: "--ink-ruby",
+    Sapphire: "--ink-sapphire",
+    Steel: "--ink-steel",
+  }),
+  GEM_PRIMARY_PROPERTY: "--gem-primary",
+  GEM_SECONDARY_PROPERTY: "--gem-secondary",
+  GEM_UNKNOWN_CLASS: "card-row__gem--unknown",
+  NAME_MISSING_CLASS: "card-row__name--missing",
+  INK_LIST_SEPARATOR: " / ",
   ABORT_ERROR_NAME: "AbortError",
   REQUESTS_PER_CARD: 2,
   ESTIMATED_NETWORK_SECONDS_PER_CARD: 0.6,
@@ -72,6 +96,11 @@ const MESSAGES = Object.freeze({
   IMPORT_ISSUE: (issue) => `Line ${issue.line_number}: ${issue.line} - ${issue.detail}`,
   IMPORT_SKIPPED: (label, reason) => `${label} skipped: ${reason}`,
   IMPORTED_CARD_LABEL: (setCode, number, name) => `Set ${setCode} #${number} ${name}`,
+  CARD_ROW_TITLE: (setCode, number, name, inks) =>
+    inks.length > 0
+      ? `Set ${setCode} #${number} ${name} (${inks.join(CONFIG.INK_LIST_SEPARATOR)})`
+      : `Set ${setCode} #${number} ${name}`,
+  CARD_NOT_FOUND: "Not found on Lorcast",
 });
 
 const state = {
@@ -248,7 +277,9 @@ function addEntry(event) {
       dom.numberInput.focus();
       return;
     }
-    state.entries.push({ key, ...card });
+    const entry = { key, ...card, name: null, inks: [], lookup: LOOKUP.PENDING };
+    state.entries.push(entry);
+    lookupEntry(entry);
   }
 
   // Keep the set so several cards from one set can be entered quickly.
@@ -288,17 +319,70 @@ function updateEntryQuantity(entry, input, errorElement) {
 
 // --- Rendering ---------------------------------------------------------------
 
+function renderGem(gem, inks) {
+  const colors = inks.map((ink) => CONFIG.INK_CSS_VARS[ink]).filter(Boolean);
+  gem.classList.toggle(CONFIG.GEM_UNKNOWN_CLASS, colors.length === 0);
+  if (colors.length === 0) {
+    gem.style.removeProperty(CONFIG.GEM_PRIMARY_PROPERTY);
+    gem.style.removeProperty(CONFIG.GEM_SECONDARY_PROPERTY);
+    return;
+  }
+  gem.style.setProperty(CONFIG.GEM_PRIMARY_PROPERTY, `var(${colors[0]})`);
+  gem.style.setProperty(CONFIG.GEM_SECONDARY_PROPERTY, `var(${colors[colors.length - 1]})`);
+}
+
+function renderRowLabel(row, entry) {
+  const nameElement = row.querySelector(".card-row__name");
+  const missing = entry.lookup === LOOKUP.NOT_FOUND;
+  nameElement.textContent = missing ? MESSAGES.CARD_NOT_FOUND : entry.name ?? "";
+  nameElement.classList.toggle(CONFIG.NAME_MISSING_CLASS, missing);
+  renderGem(row.querySelector(".card-row__gem"), entry.inks ?? []);
+  row.querySelector(".card-row__id").title = entry.name
+    ? MESSAGES.CARD_ROW_TITLE(entry.setCode, entry.number, entry.name, entry.inks ?? [])
+    : "";
+}
+
+function findRow(entry) {
+  return [...dom.list.children].find((row) => row.dataset.key === entry.key) ?? null;
+}
+
+/** Fetch name and ink colors for a hand-entered card; only that row is redrawn. */
+async function lookupEntry(entry) {
+  entry.lookup = LOOKUP.PENDING;
+  const operation = startOperation(CONFIG.LOOKUP_TIMEOUT_SECONDS);
+  const query = new URLSearchParams({ set_code: entry.setCode, number: entry.number });
+  let result;
+  try {
+    result = await requestJson(`${API_ROUTES.CARD}?${query}`, operation);
+  } finally {
+    finishOperation(operation);
+  }
+
+  if (result.ok && typeof result.data.name === "string" && Array.isArray(result.data.inks)) {
+    entry.name = result.data.name;
+    entry.inks = result.data.inks;
+    entry.lookup = LOOKUP.DONE;
+  } else if (result.status === CONFIG.HTTP_NOT_FOUND) {
+    entry.lookup = LOOKUP.NOT_FOUND;
+  } else {
+    entry.lookup = LOOKUP.FAILED;
+    console.warn(`Could not look up set ${entry.setCode} card ${entry.number}`, result);
+  }
+  const row = state.entries.includes(entry) ? findRow(entry) : null;
+  if (row) {
+    renderRowLabel(row, entry);
+  }
+}
+
 function renderList() {
   const rows = state.entries.map((entry) => {
     const row = dom.rowTemplate.content.firstElementChild.cloneNode(true);
     const input = row.querySelector(".card-row__qty-input");
     const errorElement = row.querySelector(".card-row__error");
+    row.dataset.key = entry.key;
     row.querySelector(".card-row__set").textContent = entry.setCode;
     row.querySelector(".card-row__number").textContent = entry.number;
-    if (entry.name) {
-      row.querySelector(".card-row__name").textContent = entry.name;
-      row.querySelector(".card-row__id").title = MESSAGES.IMPORTED_CARD_LABEL(entry.setCode, entry.number, entry.name);
-    }
+    renderRowLabel(row, entry);
     input.min = String(state.limits.min_quantity);
     input.max = String(state.limits.max_quantity);
     input.value = String(entry.quantity);
@@ -394,23 +478,21 @@ function finishOperation(operation) {
   window.clearTimeout(operation.timeoutId);
 }
 
-function failure(title, details = [], requestId = null) {
-  return { ok: false, cancelled: false, title, details, requestId };
+function failure(title, details = [], requestId = null, status = null) {
+  return { ok: false, cancelled: false, title, details, requestId, status };
 }
 
-/** POST JSON and classify every outcome: success, cancel, timeout, network, HTTP error, or unreadable body. */
-async function postJson(route, body, operation) {
+/** GET (no body) or POST JSON, and classify every outcome: success, cancel, timeout, network, HTTP error, or unreadable body. */
+async function requestJson(route, operation, body = undefined) {
+  const headers = { [CONFIG.ACCEPT_HEADER]: CONFIG.JSON_CONTENT_TYPE };
+  const init = { method: CONFIG.GET_METHOD, headers, signal: operation.controller.signal };
+  if (body !== undefined) {
+    headers[CONFIG.CONTENT_TYPE_HEADER] = CONFIG.JSON_CONTENT_TYPE;
+    Object.assign(init, { method: CONFIG.POST_METHOD, body: JSON.stringify(body) });
+  }
   let response;
   try {
-    response = await fetch(route, {
-      method: CONFIG.POST_METHOD,
-      headers: {
-        [CONFIG.CONTENT_TYPE_HEADER]: CONFIG.JSON_CONTENT_TYPE,
-        [CONFIG.ACCEPT_HEADER]: CONFIG.JSON_CONTENT_TYPE,
-      },
-      body: JSON.stringify(body),
-      signal: operation.controller.signal,
-    });
+    response = await fetch(route, init);
   } catch (error) {
     if (error.name === CONFIG.ABORT_ERROR_NAME) {
       if (operation.abortReason === CONFIG.ABORT_REASON_TIMEOUT) {
@@ -426,12 +508,13 @@ async function postJson(route, body, operation) {
   const data = await readJson(response);
   const requestId = data?.request_id ?? headerRequestId;
   if (data === undefined) {
-    return failure(response.ok ? MESSAGES.BAD_JSON_TITLE : MESSAGES.HTTP_TITLE(response.status), [], requestId);
+    const title = response.ok ? MESSAGES.BAD_JSON_TITLE : MESSAGES.HTTP_TITLE(response.status);
+    return failure(title, [], requestId, response.status);
   }
   if (!response.ok) {
     const details = Array.isArray(data.details) ? data.details : [];
     const title = typeof data.message === "string" ? data.message : MESSAGES.HTTP_TITLE(response.status);
-    return failure(title, details, requestId);
+    return failure(title, details, requestId, response.status);
   }
   return { ok: true, data, requestId };
 }
@@ -446,7 +529,7 @@ async function generateSheet() {
   };
 
   try {
-    const result = await postJson(API_ROUTES.SHEET, body, operation);
+    const result = await requestJson(API_ROUTES.SHEET, operation, body);
     if (!result.ok) {
       showErrors(result.title, result.details, result.requestId);
       return;
@@ -570,11 +653,14 @@ function mergeImportedCards(cards) {
       continue;
     }
 
+    const inks = Array.isArray(card.inks) ? card.inks : [];
     if (existing) {
       existing.quantity += quantity;
-      existing.name = existing.name || card.name;
+      if (existing.lookup !== LOOKUP.DONE) {
+        Object.assign(existing, { name: card.name, inks, lookup: LOOKUP.DONE });
+      }
     } else {
-      state.entries.push({ key, setCode, number, quantity, name: card.name });
+      state.entries.push({ key, setCode, number, quantity, name: card.name, inks, lookup: LOOKUP.DONE });
     }
     added += 1;
     copies += quantity;
@@ -606,7 +692,7 @@ async function submitImport(event) {
   setImportBusy(true);
 
   try {
-    const result = await postJson(API_ROUTES.IMPORT, { text: input.text }, operation);
+    const result = await requestJson(API_ROUTES.IMPORT, operation, { text: input.text });
     if (result.cancelled) {
       return;
     }

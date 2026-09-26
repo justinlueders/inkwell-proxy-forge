@@ -21,6 +21,9 @@ from server.normalization import normalize_identifier, set_code_key
 
 logger = logging.getLogger(__name__)
 
+LORCAST_INK_KEY = "ink"
+LORCAST_INKS_KEY = "inks"
+
 
 # --- Enums -------------------------------------------------------------------
 
@@ -106,6 +109,26 @@ class LorcastCard(LorcastModel):
     image_uris: ImageUris | None = None
     collector_number: str
     card_set: LorcastSet = Field(alias="set")
+    inks: tuple[Ink, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_inks(cls, data: Any) -> Any:
+        """Lorcast lists colors in `inks`; some cards only fill in `ink`, and a few leave `ink` null."""
+        if not isinstance(data, dict):
+            return data
+        raw = data.get(LORCAST_INKS_KEY)
+        if not isinstance(raw, list) or not raw:
+            single = data.get(LORCAST_INK_KEY)
+            raw = [single] if single else []
+        known = {ink.value for ink in Ink}
+        inks: list[str] = []
+        for value in raw:
+            if value not in known:
+                logger.warning("Unknown ink %r from Lorcast; ignoring it", value)
+            elif value not in inks:
+                inks.append(value)
+        return {**data, LORCAST_INKS_KEY: inks}
 
     @field_validator("layout", mode="before")
     @classmethod
@@ -217,6 +240,15 @@ class ImportedCard(BaseModel):
     number: str
     quantity: int
     name: str
+    inks: list[Ink] = Field(default_factory=list)
+
+
+class CardInfoResponse(BaseModel):
+    request_id: str
+    set_code: str
+    number: str
+    name: str
+    inks: list[Ink]
 
 
 class ImportIssue(BaseModel):

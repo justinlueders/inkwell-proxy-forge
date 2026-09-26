@@ -6,10 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from server.config import (
+    API_CARD_ROUTE,
     API_CONFIG_ROUTE,
     API_HEALTH_ROUTE,
     API_IMPORT_ROUTE,
     API_SHEET_ROUTE,
+    MAX_IDENTIFIER_LENGTH,
     MAX_IMPORT_LINES,
     MAX_IMPORT_TEXT_LENGTH,
     REQUEST_ID_HEADER,
@@ -124,6 +126,7 @@ def test_import_resolves_cards_and_reports_issues_in_line_order(import_api: Test
         ("1", "130", 3),
     ]
     assert data["cards"][0]["name"] == "Hercules - Spectral Demigod"
+    assert data["cards"][0]["inks"] == ["Amber"]
     assert [(issue["line_number"], issue["reason"]) for issue in data["issues"]] == [
         (2, "PARSE_ERROR"),
         (4, "NOT_FOUND"),
@@ -152,6 +155,41 @@ def test_import_upstream_outage_is_reported_per_line(make_client: Callable[[Hand
     assert response.status_code == 200
     assert response.json()["cards"] == []
     assert response.json()["issues"][0]["reason"] == "UPSTREAM_UNAVAILABLE"
+
+
+def test_card_info_returns_name_and_inks(api: TestClient) -> None:
+    response = api.get(API_CARD_ROUTE, params={"set_code": "p1", "number": "007"})
+    assert response.status_code == 200
+    data = response.json()
+    assert (data["set_code"], data["number"]) == ("P1", "7")
+    assert data["name"] == "Eilonwy - Princess of Llyr"
+    assert data["inks"] == ["Amber"]
+    assert response.headers[REQUEST_ID_HEADER] == data["request_id"]
+
+
+@pytest.mark.parametrize("params", [{"set_code": "10", "number": "9999"}, {"set_code": "ZZZ", "number": "1"}])
+def test_card_info_unknown_card_is_404(api: TestClient, params: dict[str, str]) -> None:
+    response = api.get(API_CARD_ROUTE, params=params)
+    assert response.status_code == 404
+    assert set(response.json()) == {"request_id", "message", "details"}
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"set_code": "10"}, {"set_code": " ", "number": "1"}, {"set_code": "10", "number": "1" * (MAX_IDENTIFIER_LENGTH + 1)}],
+)
+def test_card_info_rejects_bad_identifiers(api: TestClient, params: dict[str, str]) -> None:
+    assert api.get(API_CARD_ROUTE, params=params).status_code == 422
+
+
+def test_card_info_upstream_outage_is_502(make_client: Callable[[Handler], LorcastClient]) -> None:
+    lorcast = make_client(lambda _: httpx.Response(503))
+    app.dependency_overrides[get_lorcast_client] = lambda: lorcast
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(API_CARD_ROUTE, params={"set_code": "10", "number": "1"})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 502
 
 
 def test_config_exposes_import_limits(api: TestClient) -> None:

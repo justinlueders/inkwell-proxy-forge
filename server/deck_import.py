@@ -153,6 +153,7 @@ async def resolve_deck_lines(
                     number=card.collector_number,
                     quantity=deck_line.quantity,
                     name=card.display_name,
+                    inks=list(card.inks),
                 ),
             )
     return cards, issues
