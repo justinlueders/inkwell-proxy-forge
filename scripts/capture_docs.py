@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Justin Lueders
 
 """Regenerate the README screenshots from a running server: python -m scripts.capture_docs [base_url]

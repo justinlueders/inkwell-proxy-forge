@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Justin Lueders
 
 """Application-wide constants. No other module should contain literal URLs, sizes, delays, or limits."""

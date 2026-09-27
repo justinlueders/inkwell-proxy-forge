@@ -2,7 +2,7 @@
 
 A small local web app that builds printable **Disney Lorcana proxy sheets**. You list cards by set number, card number, and quantity (or paste a dreamborn.ink deck list); a FastAPI server fetches each card's art from the [Lorcast API](https://lorcast.com/docs/api/cards) and returns **300 DPI US Letter pages** with a print button.
 
-Unofficial fan project, licensed under [GPL-3.0-or-later](#license). Not affiliated with Disney or Ravensburger; see the [disclaimer](#disclaimer).
+Unofficial fan project, licensed under [AGPL-3.0-or-later](#license). Not affiliated with Disney or Ravensburger; see the [disclaimer](#disclaimer).
 
 ![Inkwell Proxy Forge UI](docs/screenshot.png)
 
@@ -205,10 +205,13 @@ Card data and images come from [Lorcast](https://lorcast.com), a free community 
 
 Copyright (C) 2026 Justin Lueders
 
-The code is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE), either version 3 of the License or (at your option) any later version.
+The code is free software: you can redistribute it and/or modify it under the terms of the [GNU Affero General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the License or (at your option) any later version.
 
-In practice, you can use, study, change and share the code. If you distribute it, or a modified version, you must release it under the same license and make the source available.
+In practice, you can use, study, change and share the code, but it has to stay open source:
+
+- If you distribute it, or a modified version, you must release it under the same license with its source code.
+- If you **run a modified version as a website or service** that other people use, you must offer those users the source code of your modified version (section 13 of the license). The simplest way is to point the footer's "Source code" link at your own public fork.
 
 This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for details.
 
-Each source file carries an `SPDX-License-Identifier: GPL-3.0-or-later` header.
+Each source file carries an `SPDX-License-Identifier: AGPL-3.0-or-later` header.

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Justin Lueders
 
 """Manual UI check with Playwright and the installed Edge: python -m scripts.smoke_ui [base_url]

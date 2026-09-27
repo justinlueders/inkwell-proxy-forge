@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Justin Lueders
 
 """Manual UI check of the deck import dialog: python -m scripts.smoke_import_ui [base_url]
