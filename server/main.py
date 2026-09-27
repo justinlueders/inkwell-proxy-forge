@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """FastAPI app: static UI, sheet generation endpoint, and uniform error responses."""
 
 import asyncio

@@ -2,6 +2,8 @@
 
 A small local web app that builds printable **Disney Lorcana proxy sheets**. You list cards by set number, card number, and quantity (or paste a dreamborn.ink deck list); a FastAPI server fetches each card's art from the [Lorcast API](https://lorcast.com/docs/api/cards) and returns **300 DPI US Letter pages** with a print button.
 
+Unofficial fan project, licensed under [GPL-3.0-or-later](#license). Not affiliated with Disney or Ravensburger; see the [disclaimer](#disclaimer).
+
 ![Inkwell Proxy Forge UI](docs/screenshot.png)
 
 ## Features
@@ -190,4 +192,23 @@ The tests use mocked HTTP responses, so they don't contact Lorcast. The `scripts
 
 ## Credits
 
-Card data and images come from [Lorcast](https://lorcast.com). This is an unofficial fan tool for personal playtesting and is not published, endorsed, or approved by Disney or Ravensburger. Disney Lorcana is a trademark of Disney.
+Card data and images come from [Lorcast](https://lorcast.com), a free community API. Please use it responsibly: keep the request delay in place, and follow Lorcast's own terms.
+
+## Disclaimer
+
+- **Unofficial fan project.** Inkwell Proxy Forge is not published, endorsed, sponsored or approved by Disney, Ravensburger or Lorcast. Disney Lorcana and all related names and marks are trademarks of Disney.
+- **Card content is not covered by this project's license.** Card names, text and artwork are © Disney, including the card art in the screenshots in `docs/`. This repository doesn't contain or redistribute card images; the app downloads them from Lorcast when you use it.
+- **Proxies are for personal use.** The sheets are intended for playtesting and casual play. Don't sell proxies or pass them off as genuine cards. Organized play and tournaments have their own rules about proxies, so check with your event organizer before bringing them.
+- **No warranty.** The software is provided as is, without any warranty. See sections 15 and 16 of the license.
+
+## License
+
+Copyright (C) 2026 Justin Lueders
+
+The code is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](LICENSE), either version 3 of the License or (at your option) any later version.
+
+In practice, you can use, study, change and share the code. If you distribute it, or a modified version, you must release it under the same license and make the source available.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for details.
+
+Each source file carries an `SPDX-License-Identifier: GPL-3.0-or-later` header.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """Manual live check of deck list import against a running server: python -m scripts.smoke_import [base_url]"""
 
 import sys

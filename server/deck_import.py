@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """Parse pasted deck lists (dreamborn.ink "count Name - Version" format) and resolve them to printings."""
 
 import dataclasses

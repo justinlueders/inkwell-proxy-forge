@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """Manual UI check of the deck import dialog: python -m scripts.smoke_import_ui [base_url]
 
 Requires `pip install playwright` (not a project dependency) and live Lorcast access.

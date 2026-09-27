@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 import pytest
 
 from server.normalization import normalize_identifier, set_code_key

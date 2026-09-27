@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """Manual live check against the Lorcast API: python -m scripts.smoke_lorcast"""
 
 import asyncio

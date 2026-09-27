@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Justin Lueders
+
 """Manual end-to-end check against a running server: python -m scripts.smoke_api [base_url]"""
 
 import base64
